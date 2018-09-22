@@ -22,7 +22,16 @@ LOCAL_CFLAGS := \
 	-DALSA_CONFIG_DIR=\"/system/usr/share/alsa\" \
 	-DALSA_PLUGIN_DIR=\"/system/usr/lib/alsa-lib\" \
 	-DALSA_DEVICE_DIRECTORY=\"/dev/snd/\" \
-	-finline-limit=300 -finline-functions -fno-inline-functions-called-once
+	-finline-limit=300 -finline-functions -fno-inline-functions-called-once \
+        -Wno-enum-conversion \
+        -Wno-implicit-function-declaration \
+        -Wno-logical-not-parentheses \
+        -Wno-pointer-arith \
+        -Wno-sign-compare \
+        -Wno-unused-const-variable \
+        -Wno-unused-function \
+        -Wno-unused-parameter \
+        -Wno-unused-variable
 
 LOCAL_SRC_FILES := $(sort $(call all-c-files-under, src))
 
