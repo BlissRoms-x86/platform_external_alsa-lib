@@ -105,8 +105,8 @@ int parse_access(snd_config_t *cfg,
 
 /* Save Access */
 static int tplg_save_access(snd_tplg_t *tplg ATTRIBUTE_UNUSED,
-			    struct snd_soc_tplg_ctl_hdr *hdr, char **dst,
-			    const char *pfx)
+			    struct snd_soc_tplg_ctl_hdr *hdr,
+			    struct tplg_buf *dst, const char *pfx)
 {
 	const char *last;
 	unsigned int j, count, access, cval;
@@ -399,7 +399,7 @@ int tplg_parse_tlv(snd_tplg_t *tplg, snd_config_t *cfg,
 /* save TLV data */
 int tplg_save_tlv(snd_tplg_t *tplg ATTRIBUTE_UNUSED,
 		  struct tplg_elem *elem,
-		  char **dst, const char *pfx)
+		  struct tplg_buf *dst, const char *pfx)
 {
 	struct snd_soc_tplg_ctl_tlv *tlv = elem->tlv;
 	struct snd_soc_tplg_tlv_dbscale *scale;
@@ -557,7 +557,7 @@ int tplg_parse_control_bytes(snd_tplg_t *tplg,
 /* save control bytes */
 int tplg_save_control_bytes(snd_tplg_t *tplg ATTRIBUTE_UNUSED,
 			    struct tplg_elem *elem,
-			    char **dst, const char *pfx)
+			    struct tplg_buf *dst, const char *pfx)
 {
 	struct snd_soc_tplg_bytes_control *be = elem->bytes_ext;
 	char pfx2[16];
@@ -697,7 +697,7 @@ int tplg_parse_control_enum(snd_tplg_t *tplg, snd_config_t *cfg,
 /* save control eunm */
 int tplg_save_control_enum(snd_tplg_t *tplg ATTRIBUTE_UNUSED,
 			   struct tplg_elem *elem,
-			   char **dst, const char *pfx)
+			   struct tplg_buf *dst, const char *pfx)
 {
 	struct snd_soc_tplg_enum_control *ec = elem->enum_ctrl;
 	char pfx2[16];
@@ -858,8 +858,8 @@ int tplg_parse_control_mixer(snd_tplg_t *tplg,
 }
 
 int tplg_save_control_mixer(snd_tplg_t *tplg ATTRIBUTE_UNUSED,
-			    struct tplg_elem *elem, char **dst,
-			    const char *pfx)
+			    struct tplg_elem *elem,
+			    struct tplg_buf *dst, const char *pfx)
 {
 	struct snd_soc_tplg_mixer_control *mc = elem->mixer_ctrl;
 	char pfx2[16];
@@ -879,9 +879,9 @@ int tplg_save_control_mixer(snd_tplg_t *tplg ATTRIBUTE_UNUSED,
 	if (err >= 0 && mc->max > 0)
 		err = tplg_save_printf(dst, pfx, "\tmax %u\n", mc->max);
 	if (err >= 0 && mc->invert > 0)
-		err = tplg_save_printf(dst, pfx, "\tinvert 1\n", mc->max);
+		err = tplg_save_printf(dst, pfx, "\tinvert 1\n");
 	if (err >= 0 && mc->invert > 0)
-		err = tplg_save_printf(dst, pfx, "\tinvert 1\n", mc->max);
+		err = tplg_save_printf(dst, pfx, "\tinvert 1\n");
 	if (err >= 0)
 		err = tplg_save_ops(tplg, &mc->hdr, dst, pfx2);
 	if (err >= 0)
@@ -1088,11 +1088,19 @@ int tplg_add_enum(snd_tplg_t *tplg, struct snd_tplg_enum_template *enum_ctl,
 	}
 
 	if (enum_ctl->texts != NULL) {
+		struct tplg_elem *texts = tplg_elem_new_common(tplg, NULL,
+						enum_ctl->hdr.name, SND_TPLG_TYPE_TEXT);
+
+		texts->texts->num_items = num_items;
 		for (i = 0; i < num_items; i++) {
-			if (enum_ctl->texts[i] != NULL)
-				snd_strlcpy(ec->texts[i], enum_ctl->texts[i],
-					    SNDRV_CTL_ELEM_ID_NAME_MAXLEN);
+			if (!enum_ctl->texts[i])
+				continue;
+			snd_strlcpy(ec->texts[i], enum_ctl->texts[i],
+				    SNDRV_CTL_ELEM_ID_NAME_MAXLEN);
+			snd_strlcpy(texts->texts->items[i], enum_ctl->texts[i],
+				    SNDRV_CTL_ELEM_ID_NAME_MAXLEN);
 		}
+		tplg_ref_add(elem, SND_TPLG_TYPE_TEXT, enum_ctl->hdr.name);
 	}
 
 	if (enum_ctl->values != NULL) {
@@ -1327,23 +1335,10 @@ int tplg_decode_control_enum1(snd_tplg_t *tplg,
 			      struct list_head *heap,
 			      struct snd_tplg_enum_template *et,
 			      size_t pos,
-			      void *bin, size_t size)
+			      struct snd_soc_tplg_enum_control *ec)
 {
-	struct snd_soc_tplg_enum_control *ec = bin;
-	struct snd_tplg_channel_map_template cmt;
 	int i;
 
-	if (size < sizeof(*ec)) {
-		SNDERR("enum: small size %d", size);
-		return -EINVAL;
-	}
-
-	tplg_log(tplg, 'D', pos, "enum: size %d private size %d",
-		 ec->size, ec->priv.size);
-	if (size != ec->size + ec->priv.size) {
-		SNDERR("enum: unexpected element size %d", size);
-		return -EINVAL;
-	}
 	if (ec->num_channels > SND_TPLG_MAX_CHAN ||
 	    ec->num_channels > SND_SOC_TPLG_MAX_CHAN) {
 		SNDERR("enum: unexpected channel count %d", ec->num_channels);
@@ -1368,18 +1363,17 @@ int tplg_decode_control_enum1(snd_tplg_t *tplg,
 		et->texts = tplg_calloc(heap, sizeof(char *) * ec->items);
 		if (!et->texts)
 			return -ENOMEM;
-		for (i = 0; ec->items; i++) {
-			unsigned int j = i * sizeof(int) * ENUM_VAL_SIZE;
+		for (i = 0; (unsigned int)i < ec->items; i++)
 			et->texts[i] = ec->texts[i];
-			et->values[i] = (int *)&ec->values[j];
-		}
 	}
 
-	et->map = &cmt;
-	memset(&cmt, 0, sizeof(cmt));
-	cmt.num_channels = ec->num_channels;
-	for (i = 0; i < cmt.num_channels; i++) {
-		struct snd_tplg_channel_elem *channel = &cmt.channel[i];
+	et->map = tplg_calloc(heap, sizeof(struct snd_tplg_channel_map_template));
+	if (!et->map)
+		return -ENOMEM;
+	et->map->num_channels = ec->num_channels;
+	for (i = 0; i < et->map->num_channels; i++) {
+		struct snd_tplg_channel_elem *channel = &et->map->channel[i];
+
 		tplg_log(tplg, 'D', pos + ((void *)&ec->channel[i] - (void *)ec),
 			 "enum: channel size %d", ec->channel[i].size);
 		channel->reg = ec->channel[i].reg;
@@ -1421,7 +1415,10 @@ next:
 		return -EINVAL;
 	}
 
-	err = tplg_decode_control_enum1(tplg, &heap, &et, pos, bin, size);
+	tplg_log(tplg, 'D', pos, "enum: size %d private size %d",
+		 ec->size, ec->priv.size);
+
+	err = tplg_decode_control_enum1(tplg, &heap, &et, pos, ec);
 	if (err >= 0) {
 		t.enum_ctl = &et;
 		err = snd_tplg_add_object(tplg, &t);

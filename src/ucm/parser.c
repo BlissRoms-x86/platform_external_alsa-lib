@@ -234,9 +234,32 @@ int parse_get_safe_name(snd_use_case_mgr_t *uc_mgr, snd_config_t *n,
 		if (err < 0)
 			return err;
 	}
-	if (!parse_is_name_safe(id))
+	err = get_string3(uc_mgr, id, name);
+	if (err < 0)
+		return err;
+	if (!parse_is_name_safe(*name)) {
+		free(*name);
 		return -EINVAL;
-	return get_string3(uc_mgr, id, name);
+	}
+	return 0;
+}
+
+/*
+ * Handle 'Error' configuration node.
+ */
+static int error_node(snd_use_case_mgr_t *uc_mgr, snd_config_t *cfg)
+{
+	int err;
+	char *s;
+
+	err = parse_string_substitute3(uc_mgr, cfg, &s);
+	if (err < 0) {
+		uc_error("error: failed to get Error string");
+		return err;
+	}
+	uc_error("%s", s);
+	free(s);
+	return -ENXIO;
 }
 
 /*
@@ -1723,11 +1746,11 @@ static int parse_controls_boot(snd_use_case_mgr_t *uc_mgr, snd_config_t *cfg)
 {
 	int err;
 
-	if (!list_empty(&uc_mgr->once_list)) {
-		uc_error("Once list is not empty");
+	if (!list_empty(&uc_mgr->boot_list)) {
+		uc_error("Boot list is not empty");
 		return -EINVAL;
 	}
-	err = parse_sequence(uc_mgr, &uc_mgr->once_list, cfg);
+	err = parse_sequence(uc_mgr, &uc_mgr->boot_list, cfg);
 	if (err < 0) {
 		uc_error("Unable to parse BootSequence");
 		return err;
@@ -1850,7 +1873,7 @@ static int parse_master_file(snd_use_case_mgr_t *uc_mgr, snd_config_t *cfg)
 			continue;
 
 		if (strcmp(id, "Comment") == 0) {
-			err = parse_string(n, &uc_mgr->comment);
+			err = parse_string_substitute3(uc_mgr, n, &uc_mgr->comment);
 			if (err < 0) {
 				uc_error("error: failed to get master comment");
 				return err;
@@ -1893,6 +1916,10 @@ static int parse_master_file(snd_use_case_mgr_t *uc_mgr, snd_config_t *cfg)
 			}
 			continue;
 		}
+
+		/* error */
+		if (strcmp(id, "Error") == 0)
+			return error_node(uc_mgr, n);
 
 		uc_error("uknown master file field %s", id);
 	}

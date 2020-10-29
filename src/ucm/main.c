@@ -41,6 +41,12 @@
  * misc
  */
 
+static int get_value(snd_use_case_mgr_t *uc_mgr,
+			const char *identifier,
+			char **value,
+			const char *mod_dev_name,
+			const char *verb_name,
+			int exact);
 static int get_value1(snd_use_case_mgr_t *uc_mgr, char **value,
                       struct list_head *value_list, const char *identifier);
 static int get_value3(snd_use_case_mgr_t *uc_mgr,
@@ -569,6 +575,31 @@ static int import_master_config(snd_use_case_mgr_t *uc_mgr)
 }
 
 /**
+ * \brief Check, if the UCM configuration is empty
+ * \param uc_mgr Use case Manager
+ * \return zero on success, otherwise a negative error code
+ */
+static int check_empty_configuration(snd_use_case_mgr_t *uc_mgr)
+{
+	int err;
+	char *value;
+
+	err = get_value(uc_mgr, "Linked", &value, NULL, NULL, 1);
+	if (err >= 0) {
+		err = strcasecmp(value, "true") == 0 ||
+		      strcmp(value, "1") == 0;
+		free(value);
+		if (err)
+			return 0;
+	}
+	if (!list_empty(&uc_mgr->verb_list))
+		return 0;
+	if (!list_empty(&uc_mgr->boot_list))
+		return 0;
+	return -ENXIO;
+}
+
+/**
  * \brief Universal find - string in a list
  * \param list List of structures
  * \param offset Offset of list structure
@@ -962,7 +993,7 @@ int snd_use_case_mgr_open(snd_use_case_mgr_t **uc_mgr,
 	if (mgr == NULL)
 		return -ENOMEM;
 	INIT_LIST_HEAD(&mgr->verb_list);
-	INIT_LIST_HEAD(&mgr->once_list);
+	INIT_LIST_HEAD(&mgr->boot_list);
 	INIT_LIST_HEAD(&mgr->default_list);
 	INIT_LIST_HEAD(&mgr->value_list);
 	INIT_LIST_HEAD(&mgr->active_modifiers);
@@ -981,14 +1012,20 @@ int snd_use_case_mgr_open(snd_use_case_mgr_t **uc_mgr,
 	err = import_master_config(mgr);
 	if (err < 0) {
 		uc_error("error: failed to import %s use case configuration %d",
-			card_name, err);
-		goto err;
+			 card_name, err);
+		goto _err;
+	}
+
+	err = check_empty_configuration(mgr);
+	if (err < 0) {
+		uc_error("error: failed to import %s (empty configuration)", card_name);
+		goto _err;
 	}
 
 	*uc_mgr = mgr;
 	return 0;
 
-err:
+_err:
 	uc_mgr_free(mgr);
 	return err;
 }
@@ -1858,10 +1895,10 @@ static int set_boot_user(snd_use_case_mgr_t *uc_mgr,
 		uc_error("error: wrong value for _boot (%s)", value);
 		return -EINVAL;
 	}
-	err = execute_sequence(uc_mgr, &uc_mgr->once_list,
+	err = execute_sequence(uc_mgr, &uc_mgr->boot_list,
 			       &uc_mgr->value_list, NULL, NULL);
 	if (err < 0) {
-		uc_error("Unable to execute once sequence");
+		uc_error("Unable to execute boot sequence");
 		return err;
 	}
 	return err;

@@ -16,6 +16,7 @@
 
 #include "local.h"
 #include "list.h"
+#include "bswap.h"
 #include "topology.h"
 
 #include <sound/type_compat.h>
@@ -200,6 +201,14 @@ struct map_elem {
 	int id;
 };
 
+/* output buffer */
+struct tplg_buf {
+	char *dst;
+	size_t dst_len;
+	char *printf_buf;
+	size_t printf_buf_size;
+};
+
 /* mapping table */
 struct tplg_table {
 	const char *name;
@@ -214,9 +223,9 @@ struct tplg_table {
 	void (*free)(void *);
 	int (*parse)(snd_tplg_t *tplg, snd_config_t *cfg, void *priv);
 	int (*save)(snd_tplg_t *tplg, struct tplg_elem *elem,
-		    char **dst, const char *prefix);
+		    struct tplg_buf *dst, const char *prefix);
 	int (*gsave)(snd_tplg_t *tplg, int index,
-		     char **dst, const char *prefix);
+		     struct tplg_buf *dst, const char *prefix);
 	int (*decod)(snd_tplg_t *tplg, size_t pos,
 		     struct snd_soc_tplg_hdr *hdr,
 		     void *bin, size_t size);
@@ -224,6 +233,25 @@ struct tplg_table {
 
 extern struct tplg_table tplg_table[];
 extern unsigned int tplg_table_items;
+
+#if __SIZEOF_INT__ == 4
+static inline unsigned int unaligned_get32(void *src)
+{
+	unsigned int ret;
+	memcpy(&ret, src, sizeof(ret));
+#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+	ret = bswap_32(ret);
+#endif
+	return ret;
+}
+static inline void unaligned_put32(void *dst, unsigned int val)
+{
+#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+	val = bswap_32(val);
+#endif
+	memcpy(dst, &val, sizeof(val));
+}
+#endif
 
 #define tplg_log(tplg, type, pos, fmt, args...) do { \
 	if ((tplg)->verbose) \
@@ -335,49 +363,49 @@ int tplg_add_dai_object(snd_tplg_t *tplg, snd_tplg_obj_template_t *t);
 
 int tplg_nice_value_format(char *dst, size_t dst_size, unsigned int value);
 
-int tplg_save_printf(char **dst, const char *prefix, const char *fmt, ...);
+int tplg_save_printf(struct tplg_buf *dst, const char *prefix, const char *fmt, ...);
 int tplg_save_refs(snd_tplg_t *tplg, struct tplg_elem *elem, unsigned int type,
-		   const char *id, char **dst, const char *pfx);
+		   const char *id, struct tplg_buf *dst, const char *pfx);
 int tplg_save_channels(snd_tplg_t *tplg, struct snd_soc_tplg_channel *channel,
-		       unsigned int channel_count, char **dst, const char *pfx);
+		       unsigned int channel_count, struct tplg_buf *dst, const char *pfx);
 int tplg_save_ops(snd_tplg_t *tplg, struct snd_soc_tplg_ctl_hdr *hdr,
-		  char **dst, const char *pfx);
+		  struct tplg_buf *dst, const char *pfx);
 int tplg_save_ext_ops(snd_tplg_t *tplg, struct snd_soc_tplg_bytes_control *be,
-		      char **dst, const char *pfx);
+		      struct tplg_buf *dst, const char *pfx);
 int tplg_save_manifest_data(snd_tplg_t *tplg, struct tplg_elem *elem,
-			    char **dst, const char *pfx);
+			    struct tplg_buf *dst, const char *pfx);
 int tplg_save_control_mixer(snd_tplg_t *tplg, struct tplg_elem *elem,
-			    char **dst, const char *pfx);
+			    struct tplg_buf *dst, const char *pfx);
 int tplg_save_control_enum(snd_tplg_t *tplg, struct tplg_elem *elem,
-			   char **dst, const char *pfx);
+			   struct tplg_buf *dst, const char *pfx);
 int tplg_save_control_bytes(snd_tplg_t *tplg, struct tplg_elem *elem,
-			    char **dst, const char *pfx);
+			    struct tplg_buf *dst, const char *pfx);
 int tplg_save_tlv(snd_tplg_t *tplg, struct tplg_elem *elem,
-		  char **dst, const char *pfx);
+		  struct tplg_buf *dst, const char *pfx);
 int tplg_save_data(snd_tplg_t *tplg, struct tplg_elem *elem,
-		   char **dst, const char *pfx);
+		   struct tplg_buf *dst, const char *pfx);
 int tplg_save_text(snd_tplg_t *tplg, struct tplg_elem *elem,
-		   char **dst, const char *pfx);
+		   struct tplg_buf *dst, const char *pfx);
 int tplg_save_tokens(snd_tplg_t *tplg, struct tplg_elem *elem,
-		     char **dst, const char *pfx);
+		     struct tplg_buf *dst, const char *pfx);
 int tplg_save_tuples(snd_tplg_t *tplg, struct tplg_elem *elem,
-		     char **dst, const char *pfx);
+		     struct tplg_buf *dst, const char *pfx);
 int tplg_save_dapm_graph(snd_tplg_t *tplg, int index,
-			 char **dst, const char *pfx);
+			 struct tplg_buf *dst, const char *pfx);
 int tplg_save_dapm_widget(snd_tplg_t *tplg, struct tplg_elem *elem,
-			  char **dst, const char *pfx);
+			  struct tplg_buf *dst, const char *pfx);
 int tplg_save_link(snd_tplg_t *tplg, struct tplg_elem *elem,
-		   char **dst, const char *pfx);
+		   struct tplg_buf *dst, const char *pfx);
 int tplg_save_cc(snd_tplg_t *tplg, struct tplg_elem *elem,
-		 char **dst, const char *pfx);
+		 struct tplg_buf *dst, const char *pfx);
 int tplg_save_pcm(snd_tplg_t *tplg, struct tplg_elem *elem,
-		  char **dst, const char *pfx);
+		  struct tplg_buf *dst, const char *pfx);
 int tplg_save_hw_config(snd_tplg_t *tplg, struct tplg_elem *elem,
-			char **dst, const char *pfx);
+			struct tplg_buf *dst, const char *pfx);
 int tplg_save_stream_caps(snd_tplg_t *tplg, struct tplg_elem *elem,
-			  char **dst, const char *pfx);
+			  struct tplg_buf *dst, const char *pfx);
 int tplg_save_dai(snd_tplg_t *tplg, struct tplg_elem *elem,
-		  char **dst, const char *pfx);
+		  struct tplg_buf *dst, const char *pfx);
 
 int tplg_decode_template(snd_tplg_t *tplg,
 			 size_t pos,
@@ -398,7 +426,7 @@ int tplg_decode_control_enum1(snd_tplg_t *tplg,
 			      struct list_head *heap,
 			      struct snd_tplg_enum_template *et,
 			      size_t pos,
-			      void *bin, size_t size);
+			      struct snd_soc_tplg_enum_control *ec);
 int tplg_decode_control_enum(snd_tplg_t *tplg, size_t pos,
 			     struct snd_soc_tplg_hdr *hdr,
 			     void *bin, size_t size);

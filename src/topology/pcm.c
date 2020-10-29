@@ -376,19 +376,19 @@ static int split_rate(struct snd_soc_tplg_stream_caps *caps, char *str)
 	return 0;
 }
 
-static int parse_unsigned(snd_config_t *n, unsigned int *dst)
+static int parse_unsigned(snd_config_t *n, void *dst)
 {
 	int ival;
 
 	if (tplg_get_integer(n, &ival, 0) < 0)
 		return -EINVAL;
 
-	*dst = ival;
+	unaligned_put32(dst, ival);
 #if TPLG_DEBUG
 	{
 		const char *id;
 		if (snd_config_get_id(n, &id) >= 0)
-			tplg_dbg("\t\t%s: %d", id, *dst);
+			tplg_dbg("\t\t%s: %d", id, ival);
 	}
 #endif
 	return 0;
@@ -538,7 +538,7 @@ int tplg_parse_stream_caps(snd_tplg_t *tplg,
 /* save stream caps */
 int tplg_save_stream_caps(snd_tplg_t *tplg ATTRIBUTE_UNUSED,
 			  struct tplg_elem *elem,
-			  char **dst, const char *pfx)
+			  struct tplg_buf *dst, const char *pfx)
 {
 	struct snd_soc_tplg_stream_caps *sc = elem->stream_caps;
 	const char *s;
@@ -549,7 +549,7 @@ int tplg_save_stream_caps(snd_tplg_t *tplg ATTRIBUTE_UNUSED,
 	if (err >= 0 && sc->formats) {
 		err = tplg_save_printf(dst, pfx, "\tformats '");
 		first = 1;
-		for (i = 0; err >= 0 && i < SND_PCM_FORMAT_LAST; i++) {
+		for (i = 0; err >= 0 && i <= SND_PCM_FORMAT_LAST; i++) {
 			if (sc->formats & (1ULL << i)) {
 				s = snd_pcm_format_name(i);
 				err = tplg_save_printf(dst, NULL, "%s%s",
@@ -563,7 +563,7 @@ int tplg_save_stream_caps(snd_tplg_t *tplg ATTRIBUTE_UNUSED,
 	if (err >= 0 && sc->rates) {
 		err = tplg_save_printf(dst, pfx, "\trates '");
 		first = 1;
-		for (i = 0; err >= 0 && i < SND_PCM_RATE_LAST; i++) {
+		for (i = 0; err >= 0 && i <= SND_PCM_RATE_LAST; i++) {
 			if (sc->rates & (1ULL << i)) {
 				s = get_rate_name(i);
 				err = tplg_save_printf(dst, NULL, "%s%s",
@@ -604,6 +604,9 @@ int tplg_save_stream_caps(snd_tplg_t *tplg ATTRIBUTE_UNUSED,
 	if (err >= 0 && sc->buffer_size_max)
 		err = tplg_save_printf(dst, pfx, "\tbuffer_size_max %u\n",
 				       sc->buffer_size_max);
+	if (err >= 0 && sc->sig_bits)
+		err = tplg_save_printf(dst, pfx, "\tsig_bits %u\n",
+				       sc->sig_bits);
 	if (err >= 0)
 		err = tplg_save_printf(dst, pfx, "}\n");
 	return err;
@@ -618,7 +621,7 @@ static int tplg_parse_streams(snd_tplg_t *tplg ATTRIBUTE_UNUSED,
 	struct tplg_elem *elem = private;
 	struct snd_soc_tplg_pcm *pcm;
 	struct snd_soc_tplg_dai *dai;
-	unsigned int *playback, *capture;
+	void *playback, *capture;
 	struct snd_soc_tplg_stream_caps *caps;
 	const char *id, *value;
 	int stream;
@@ -648,10 +651,10 @@ static int tplg_parse_streams(snd_tplg_t *tplg ATTRIBUTE_UNUSED,
 
 	if (strcmp(id, "playback") == 0) {
 		stream = SND_SOC_TPLG_STREAM_PLAYBACK;
-		*playback = 1;
+		unaligned_put32(playback, 1);
 	} else if (strcmp(id, "capture") == 0) {
 		stream = SND_SOC_TPLG_STREAM_CAPTURE;
-		*capture = 1;
+		unaligned_put32(capture, 1);
 	} else
 		return -EINVAL;
 
@@ -683,7 +686,7 @@ static int tplg_parse_streams(snd_tplg_t *tplg ATTRIBUTE_UNUSED,
 /* Save the caps and config of a pcm stream */
 int tplg_save_streams(snd_tplg_t *tplg ATTRIBUTE_UNUSED,
 		      struct tplg_elem *elem,
-		      char **dst, const char *pfx)
+		      struct tplg_buf *dst, const char *pfx)
 {
 	static const char *stream_ids[2] = {
 		"playback",
@@ -744,6 +747,7 @@ static int tplg_parse_fe_dai(snd_tplg_t *tplg ATTRIBUTE_UNUSED,
 	snd_config_iterator_t i, next;
 	snd_config_t *n;
 	const char *id;
+	unsigned int dai_id;
 
 	snd_config_get_id(cfg, &id);
 	tplg_dbg("\t\tFE DAI %s:", id);
@@ -758,12 +762,13 @@ static int tplg_parse_fe_dai(snd_tplg_t *tplg ATTRIBUTE_UNUSED,
 			continue;
 
 		if (strcmp(id, "id") == 0) {
-			if (tplg_get_unsigned(n, &pcm->dai_id, 0)) {
+			if (tplg_get_unsigned(n, &dai_id, 0)) {
 				SNDERR("invalid fe dai ID");
 				return -EINVAL;
 			}
 
-			tplg_dbg("\t\t\tindex: %d", pcm->dai_id);
+			unaligned_put32(&pcm->dai_id, dai_id);
+			tplg_dbg("\t\t\tindex: %d", dai_id);
 		}
 	}
 
@@ -773,19 +778,21 @@ static int tplg_parse_fe_dai(snd_tplg_t *tplg ATTRIBUTE_UNUSED,
 /* Save the caps and config of a pcm stream */
 int tplg_save_fe_dai(snd_tplg_t *tplg ATTRIBUTE_UNUSED,
 		     struct tplg_elem *elem,
-		     char **dst, const char *pfx)
+		     struct tplg_buf *dst, const char *pfx)
 {
 	struct snd_soc_tplg_pcm *pcm = elem->pcm;
 	int err = 0;
 
-	if (pcm->dai_id > 0)
+	if (strlen(pcm->dai_name))
+		err = tplg_save_printf(dst, pfx, "dai.'%s'.id %u\n", pcm->dai_name, pcm->dai_id);
+	else if (pcm->dai_id > 0)
 		err = tplg_save_printf(dst, pfx, "dai.0.id %u\n", pcm->dai_id);
 	return err;
 }
 
 /* parse a flag bit of the given mask */
 static int parse_flag(snd_config_t *n, unsigned int mask_in,
-		      unsigned int *mask, unsigned int *flags)
+		      void *mask, void *flags)
 {
 	int ret;
 
@@ -793,17 +800,17 @@ static int parse_flag(snd_config_t *n, unsigned int mask_in,
 	if (ret < 0)
 		return ret;
 
-	*mask |= mask_in;
+	unaligned_put32(mask, unaligned_get32(mask) | mask_in);
 	if (ret)
-		*flags |= mask_in;
+		unaligned_put32(flags, unaligned_get32(flags) | mask_in);
 	else
-		*flags &= ~mask_in;
+		unaligned_put32(flags, unaligned_get32(flags) & (~mask_in));
 
 	return 0;
 }
 
 static int save_flags(unsigned int flags, unsigned int mask,
-		      char **dst, const char *pfx)
+		      struct tplg_buf *dst, const char *pfx)
 {
 	static unsigned int flag_masks[3] = {
 		SND_SOC_TPLG_LNK_FLGBIT_SYMMETRIC_RATES,
@@ -937,7 +944,7 @@ int tplg_parse_pcm(snd_tplg_t *tplg, snd_config_t *cfg,
 /* save PCM */
 int tplg_save_pcm(snd_tplg_t *tplg ATTRIBUTE_UNUSED,
 		  struct tplg_elem *elem,
-		  char **dst, const char *pfx)
+		  struct tplg_buf *dst, const char *pfx)
 {
 	struct snd_soc_tplg_pcm *pcm = elem->pcm;
 	char pfx2[16];
@@ -1074,7 +1081,7 @@ int tplg_parse_dai(snd_tplg_t *tplg, snd_config_t *cfg,
 /* save DAI */
 int tplg_save_dai(snd_tplg_t *tplg ATTRIBUTE_UNUSED,
 		  struct tplg_elem *elem,
-		  char **dst, const char *pfx)
+		  struct tplg_buf *dst, const char *pfx)
 {
 	struct snd_soc_tplg_dai *dai = elem->dai;
 	char pfx2[16];
@@ -1228,7 +1235,7 @@ int tplg_parse_link(snd_tplg_t *tplg, snd_config_t *cfg,
 /* save physical link */
 int tplg_save_link(snd_tplg_t *tplg ATTRIBUTE_UNUSED,
 		   struct tplg_elem *elem,
-		   char **dst, const char *pfx)
+		   struct tplg_buf *dst, const char *pfx)
 {
 	struct snd_soc_tplg_link_config *link = elem->link;
 	char pfx2[16];
@@ -1308,7 +1315,7 @@ int tplg_parse_cc(snd_tplg_t *tplg, snd_config_t *cfg,
 /* save CC */
 int tplg_save_cc(snd_tplg_t *tplg ATTRIBUTE_UNUSED,
 		 struct tplg_elem *elem,
-		 char **dst, const char *pfx)
+		 struct tplg_buf *dst, const char *pfx)
 {
 	struct snd_soc_tplg_link_config *link = elem->link;
 	char pfx2[16];
@@ -1604,7 +1611,7 @@ int tplg_parse_hw_config(snd_tplg_t *tplg, snd_config_t *cfg,
 /* save hw config */
 int tplg_save_hw_config(snd_tplg_t *tplg ATTRIBUTE_UNUSED,
 			struct tplg_elem *elem,
-			char **dst, const char *pfx)
+			struct tplg_buf *dst, const char *pfx)
 {
 	struct snd_soc_tplg_hw_config *hc = elem->hw_cfg;
 	int err;
