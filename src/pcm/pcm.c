@@ -1099,6 +1099,9 @@ int snd_pcm_hwsync(snd_pcm_t *pcm)
 	snd_pcm_unlock(pcm->fast_op_arg);
 	return err;
 }
+#if !defined(DOC_HIDDEN) && !defined(ANDROID)
+link_warning(snd_pcm_hwsync, "Warning: snd_pcm_hwsync() is deprecated, consider to use snd_pcm_avail()");
+#endif
 
 /**
  * \brief Obtain delay for a running PCM handle
